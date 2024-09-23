@@ -4,7 +4,7 @@ import time
 from functools import reduce
 
 # 配置串口参数
-SERIAL_PORT = 'COM2'  # 修改为实际使用的串口，如 '/dev/ttyUSB0'
+SERIAL_PORT = 'COM3'  # 修改为实际使用的串口，如 '/dev/ttyUSB0'
 BAUDRATE = 115200
 TIMEOUT = 1  # 超时时间（秒）
 
@@ -65,7 +65,7 @@ class STM32Simulator:
 
     def __init__(self, port, baudrate, timeout=1):
         try:
-            self.ser = serial.Serial(port, baudrate, timeout=timeout)
+            self.ser = serial.Serial(port, baudrate, timeout=timeout,parity=serial.PARITY_NONE)
             print(f"Successfully opened serial port {port} at {baudrate} baud.")
         except serial.SerialException as e:
             print(f"Error opening serial port {port}: {e}")
@@ -110,6 +110,7 @@ class STM32Simulator:
         self.ser.write(response)
         print("Handled Get Command")
         self.send_ack()
+        self.state = self.STATE_WAIT_COMMAND
 
     def handle_read_memory_ack(self):
         """发送ACK后，进入等待地址部分"""
@@ -172,9 +173,9 @@ class STM32Simulator:
         data = mem[offset:offset + num_bytes]
         self.ser.write(data)
         print(f"Read Memory: Sent {num_bytes} bytes from address {self.buffer['address']:#010X}")
-        # data_checksum = calculate_checksum(data)
-        # self.ser.write(bytes([data_checksum]))
-        # self.send_ack()
+        data_checksum = calculate_checksum(data)
+        self.ser.write(bytes([data_checksum]))
+        self.send_ack()
         # 结束命令处理
         self.state = self.STATE_WAIT_COMMAND
         self.buffer = {}
@@ -220,6 +221,11 @@ class STM32Simulator:
         self.state = self.STATE_WRITE_MEMORY_WAIT_N_COMP
 
     def handle_write_memory_n_complement(self, byte):
+        self.buffer['data'] = [byte]
+        N = self.buffer['N']
+        self.buffer['num_bytes'] = N +1
+        self.state= self.STATE_WRITE_MEMORY_WAIT_DATA
+        return
         N = self.buffer['N']
         complement = byte
         if (N ^ complement) != 0xFF:
@@ -349,6 +355,7 @@ class STM32Simulator:
         while True:
             try:
                 byte = self.ser.read(1)
+                print(f"Received byte: {byte}")
                 if not byte:
                     continue
                 byte = byte[0]
@@ -372,6 +379,7 @@ class STM32Simulator:
                     else:
                         self.send_ack()
                         self.handle_command(self.current_command)
+                        
                 elif self.state == self.STATE_READ_MEMORY_WAIT_ADDR:
                     self.handle_read_memory_address(byte)
                 elif self.state == self.STATE_READ_MEMORY_WAIT_ADDR_CHK:
@@ -413,6 +421,8 @@ class STM32Simulator:
                 time.sleep(1)
 
 if __name__ == "__main__":
+    SERIAL_PORT = 'COM10'
+    
     simulator = STM32Simulator(SERIAL_PORT, BAUDRATE, TIMEOUT)
     simulator_thread = threading.Thread(target=simulator.listen, daemon=True)
     simulator_thread.start()
